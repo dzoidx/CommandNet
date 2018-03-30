@@ -179,7 +179,7 @@ namespace CommandNet
             _serializer = serializer;
         }
 
-        public void AddSource(Stream stream)
+        public int AddSource(Stream stream)
         {
             var streamId = Interlocked.Increment(ref _streamCount);
             var thread = new Thread(CommandStreamLoop);
@@ -193,6 +193,7 @@ namespace CommandNet
             };
             thread.Start(ctx);
             _threads.Add(thread);
+            return streamId;
         }
 
         public void RegisterHandler<T>(CommandHandlerDelegate<T> handler) where T : Command

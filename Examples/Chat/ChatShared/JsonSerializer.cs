@@ -4,7 +4,7 @@ using CommandNet;
 using CommandNet.Serializer;
 using Newtonsoft.Json;
 
-namespace ExampleShared
+namespace ChatShared
 {
     public class JsonSerializer : ICommandSerializer
     {

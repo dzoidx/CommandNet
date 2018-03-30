@@ -19,11 +19,14 @@ namespace ChatClient
 
         internal ChatClient(string host, int port, ICommandSerializer serializer)
         {
+            _host = host;
+            _port = port;
             _client = new TcpClient();
             _commandHandler = new CommandHandler(serializer);
             _commandHandler.RegisterHandler<ServerRoomMessage>(OnRoomMessage);
             _commandHandler.RegisterHandler<ServerServiceMessage>(OnServiceMessage);
             _commandHandler.OnClose += OnClose;
+            ValidateConnection();
         }
 
         public RequestContext<ServerLoginResponse> Login(string userName)
@@ -37,6 +40,7 @@ namespace ChatClient
             if (!ReferenceEquals(c, _client))
                 return;
             c.EndConnect(ar);
+            _commandHandler.AddSource(c.GetStream());
         }
 
         private void ValidateConnection()

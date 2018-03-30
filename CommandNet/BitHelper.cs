@@ -9,10 +9,10 @@ namespace CommandNet
     {
         public static int ReadIntFromArray(byte[] buff, int offset)
         {
-            var result = (int)buff[0];
-            result += buff[1] << 8;
-            result += buff[2] << 16;
-            result += buff[3] << 24;
+            var result = (int)buff[offset];
+            result += buff[offset + 1] << 8;
+            result += buff[offset + 2] << 16;
+            result += buff[offset + 3] << 24;
             return result;
         }
 

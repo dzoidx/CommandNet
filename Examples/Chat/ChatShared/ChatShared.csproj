@@ -9,7 +9,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CommandNet\CommandNet.csproj" />
+    <ProjectReference Include="..\..\..\CommandNet\CommandNet.csproj" />
   </ItemGroup>
 
 </Project>

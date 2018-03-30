@@ -6,8 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CommandNet\CommandNet.csproj" />
-    <ProjectReference Include="..\ExampleShared\ChatShared.csproj" />
+    <ProjectReference Include="..\..\..\CommandNet\CommandNet.csproj" />
+    <ProjectReference Include="..\ChatShared\ChatShared.csproj" />
   </ItemGroup>
 
 </Project>

@@ -21,6 +21,7 @@ namespace CommandNet
             _bytesPool = new ObjectPool<byte>(100, () => new byte());
             _stream = stream;
             _streamId = streamId;
+            _serializer = serializer;
         }
 
         private byte[] _header = new byte[16];
@@ -48,7 +49,7 @@ namespace CommandNet
         {
             int commandId = Interlocked.Increment(ref _commandId);
             var payload = _serializer.Serialize(command);
-            var sz = 24 + payload.Length;
+            var sz = 16 + payload.Length;
             using (var buff = _bytesPool.AllocArray(sz))
             {
                 byte[] data = buff;
@@ -56,7 +57,7 @@ namespace CommandNet
                 BitHelper.WriteIntToArray(data, 4, payload.Length);
                 BitHelper.WriteIntToArray(data, 8, commandId);
                 BitHelper.WriteIntToArray(data, 12, tag);
-                payload.CopyTo(data, 24);
+                payload.CopyTo(data, 16);
                 _stream.Write(data, 0, sz);
             }
             return GetCommandId(_streamId, commandId);
