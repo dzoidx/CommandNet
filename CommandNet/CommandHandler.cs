@@ -4,8 +4,10 @@ using System.Text;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Net.Sockets;
 using CommandNet.Serializer;
 using System.Reflection;
+using log4net;
 
 namespace CommandNet
 {
@@ -13,6 +15,7 @@ namespace CommandNet
     {
         public int StreamId;
         public CommandStream Stream;
+        public ManualResetEventSlim InitEvent;
     }
 
     public class CommandAnswerContext
@@ -159,6 +162,7 @@ namespace CommandNet
 
     public class CommandHandler : IDisposable
     {
+        private readonly static ILog Log = LogManager.GetLogger(typeof(CommandHandler));
         private int _streamCount;
         private ICommandSerializer _serializer;
         private volatile bool _disposed;
@@ -189,10 +193,12 @@ namespace CommandNet
             var ctx = new CommandHanderStreamContext
             {
                 StreamId = streamId,
-                Stream = s
+                Stream = s,
+                InitEvent = new ManualResetEventSlim(false)
             };
             thread.Start(ctx);
             _threads.Add(thread);
+            ctx.InitEvent.Wait();
             return streamId;
         }
 
@@ -231,6 +237,10 @@ namespace CommandNet
                 {
                     var c = contexts[i];
                     var uId = c.Stream.WriteCommand(request);
+                    if (uId < 1)
+                    {
+                        return null;
+                    }
                     _unansweredRequests.Add(uId, requestContext);
                 }
             }
@@ -246,6 +256,10 @@ namespace CommandNet
             lock (_unansweredRequests)
             {
                 var uId = context.Stream.WriteCommand(request);
+                if (uId < 1)
+                {
+                    return null;
+                }
                 _unansweredRequests.Add(uId, requestContext);
             }
             return requestContext;
@@ -293,6 +307,11 @@ namespace CommandNet
             if (_disposed)
                 return;
             _disposed = true;
+            lock (_streams)
+            {
+                foreach (var s in _streams)
+                    s.Value.Stream.Close();
+            }
             foreach (var t in _threads)
             {
                 t.Join();
@@ -319,6 +338,7 @@ namespace CommandNet
             var ctx = (CommandHanderStreamContext)o;
             lock (_streams)
                 _streams.Add(ctx.StreamId, ctx);
+            ctx.InitEvent.Set();
             try
             {
                 while (!_disposed)
@@ -326,6 +346,11 @@ namespace CommandNet
                     int commandId;
                     int tag;
                     var command = ctx.Stream.ReadCommand(out commandId, out tag);
+                    if (command == null)
+                    {
+                        Log.InfoFormat($"End of stream {ctx.StreamId}");
+                        return;
+                    }
                     if (tag == 0)
                     {
                         var handle = GetHandlerMethod(command.GetType());
@@ -339,7 +364,7 @@ namespace CommandNet
                             RequestBase req;
                             if (!_unansweredRequests.TryGetValue(uId, out req))
                             {
-                                //TODO: log
+                                Log.Warn($"No unanswered requests with tag {tag}. Uniq command id: {uId}");
                             }
                             else
                             {
@@ -356,6 +381,7 @@ namespace CommandNet
             }
             finally
             {
+                ctx.Stream.Close();
                 lock (_streams)
                     _streams.Remove(ctx.StreamId);
                 OnClose(ctx.StreamId);

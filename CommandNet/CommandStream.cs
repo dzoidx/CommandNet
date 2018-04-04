@@ -1,13 +1,16 @@
 ﻿using System;
 using System.IO;
 using System.Threading;
+using System.Net.Sockets;
 using CommandNet.Serializer;
 using CaptainLib.Collections;
+using log4net;
 
 namespace CommandNet
 {
     class CommandStream
     {
+        private readonly static ILog Log = LogManager.GetLogger(typeof(CommandStream));
         private int _commandId = 0;
         private Stream _stream;
         private ICommandSerializer _serializer;
@@ -24,21 +27,67 @@ namespace CommandNet
             _serializer = serializer;
         }
 
+        public void Close()
+        {
+            _stream.Close();
+        }
+
+        private bool WrappedOperation(Action action)
+        {
+            try
+            {
+                action();
+                return true;
+            }
+            catch (ObjectDisposedException e)
+            {
+                Log.Info("Connection closed by us");
+            }
+            catch (IOException e)
+            {
+                if (e.InnerException is SocketException socketException)
+                {
+                    if (socketException.SocketErrorCode == SocketError.ConnectionReset)
+                    {
+                        Log.Info($"Connection closed by remote");
+                    }
+                    else
+                    {
+                        Log.Error($"Socket error: {socketException.SocketErrorCode}");
+                    }
+                }
+                if (e.InnerException is ObjectDisposedException disposedException)
+                {
+                    Log.Info("Connection closed by us");
+                }
+            }
+            return false;
+        }
+
         private byte[] _header = new byte[16];
-        private void ReadBytes(byte[] buffer, int offset, int count)
+        private bool ReadBytes(byte[] buffer, int offset, int count)
         {
             var read = 0;
             do
             {
-                read += _stream.Read(buffer, offset + read, count - read);
+                var r = WrappedOperation(() => read += _stream.Read(buffer, offset + read, count - read));
+                if (!r)
+                    return false;
             } while (read != count);
+            return true;
         }
 
         public Command ReadCommand(out int commandId, out int tag)
         {
-            ReadBytes(_header, 0, _header.Length);
+            commandId = 0;
+            tag = 0;
+            var r = ReadBytes(_header, 0, _header.Length);
+            if (!r)
+                return null;
             var packet = Create(_header);
-            ReadBytes(packet.Payload, 0, packet.PayloadSize);
+            r = ReadBytes(packet.Payload, 0, packet.PayloadSize);
+            if (!r)
+                return null;
             var command = _serializer.Deserialize(packet.Payload);
             commandId = packet.CommandId;
             tag = packet.CommandTag;
@@ -58,7 +107,9 @@ namespace CommandNet
                 BitHelper.WriteIntToArray(data, 8, commandId);
                 BitHelper.WriteIntToArray(data, 12, tag);
                 payload.CopyTo(data, 16);
-                _stream.Write(data, 0, sz);
+                var r = WrappedOperation(() => _stream.Write(data, 0, sz));
+                if (!r)
+                    return 0;
             }
             return GetCommandId(_streamId, commandId);
         }
