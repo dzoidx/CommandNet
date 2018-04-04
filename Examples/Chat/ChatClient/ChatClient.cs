@@ -34,12 +34,23 @@ namespace ChatClient
             return _commandHandler.Request<ClientLoginRequest, ServerLoginResponse>(new ClientLoginRequest { UserName = userName }, 1);
         }
 
+        public RequestContext<ServerResponseBase> JoinRoom(string roomName)
+        {
+            return _commandHandler.Request<ClientJoinRoomRequest, ServerResponseBase>(new ClientJoinRoomRequest { RoomName = roomName }, 1);
+        }
+
+        public RequestContext<ServerResponseBase> SendMessage(string room, string message)
+        {
+            return _commandHandler.Request<ClientSendMessageToRoom, ServerResponseBase>(new ClientSendMessageToRoom { Room = room, Message = message }, 1);
+        }
+
         private void OnConnect(IAsyncResult ar)
         {
             var c = (TcpClient)ar.AsyncState;
             if (!ReferenceEquals(c, _client))
                 return;
             c.EndConnect(ar);
+            var ns = new NetworkStream(c.Client);
             _commandHandler.AddSource(c.GetStream());
         }
 
@@ -58,6 +69,7 @@ namespace ChatClient
 
         private void OnRoomMessage(ServerRoomMessage command, int streamId, CommandAnswerContext answerContext)
         {
+            Console.WriteLine($"{command.Room}:{command.FromUser}: {command.Message}");
         }
 
         private void OnServiceMessage(ServerServiceMessage command, int streamId, CommandAnswerContext answerContext)

@@ -13,7 +13,7 @@ namespace ChatShared.Commands
 
     public class ServerResponseBase : Command
     {
-        ServerResponseStatus Status;
+        public ServerResponseStatus Status;
         public string Description;
     }
 }
