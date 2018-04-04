@@ -16,6 +16,7 @@ namespace ChatClient
         private int _port;
 
         public bool IsConnected { get { return _client.Connected; } }
+        public CommandStats Stat => _commandHandler.Stats;
 
         internal ChatClient(string host, int port, ICommandSerializer serializer)
         {

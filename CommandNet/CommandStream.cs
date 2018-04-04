@@ -16,6 +16,9 @@ namespace CommandNet
         private ICommandSerializer _serializer;
         private int _streamId;
         private ObjectPool<byte> _bytesPool;
+        private CommandStats _stats = new CommandStats();
+
+        public CommandStats Stats { get { return _stats; } }
 
         public int Id { get { return _streamId; } }
 
@@ -77,10 +80,11 @@ namespace CommandNet
             return true;
         }
 
-        public Command ReadCommand(out int commandId, out int tag)
+        public Command ReadCommand(out int commandId, out int tag, out int size)
         {
             commandId = 0;
             tag = 0;
+            size = 0;
             var r = ReadBytes(_header, 0, _header.Length);
             if (!r)
                 return null;
@@ -91,11 +95,14 @@ namespace CommandNet
             var command = _serializer.Deserialize(packet.Payload);
             commandId = packet.CommandId;
             tag = packet.CommandTag;
+            size = packet.PayloadSize + 16;
+            _stats.StatReceive(size);
             return command;
         }
 
-        public long WriteCommand(Command command, int tag = 0)
+        public long WriteCommand(Command command, out int size, int tag = 0)
         {
+            size = 0;
             int commandId = Interlocked.Increment(ref _commandId);
             var payload = _serializer.Serialize(command);
             var sz = 16 + payload.Length;
@@ -110,6 +117,8 @@ namespace CommandNet
                 var r = WrappedOperation(() => _stream.Write(data, 0, sz));
                 if (!r)
                     return 0;
+                size = sz;
+                _stats.StatSend(sz);
             }
             return GetCommandId(_streamId, commandId);
         }

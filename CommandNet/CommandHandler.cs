@@ -21,11 +21,13 @@ namespace CommandNet
     public class CommandAnswerContext
     {
         private bool _answered;
+        private CommandStats _stats;
         private CommandStream _stream;
         private int _tag;
 
-        internal CommandAnswerContext(CommandStream stream, int tag)
+        internal CommandAnswerContext(CommandStats stats, CommandStream stream, int tag)
         {
+            _stats = stats;
             _stream = stream;
             _tag = tag;
         }
@@ -36,7 +38,10 @@ namespace CommandNet
                 return false;
             try
             {
-                _stream.WriteCommand(ans, _tag);
+                int size;
+                var r = _stream.WriteCommand(ans, out size, _tag);
+                if(r > 0)
+                    _stats.StatSend(size);
             }
             catch (Exception)
             {
@@ -171,9 +176,11 @@ namespace CommandNet
         private Dictionary<Type, MethodInfo> _handlersMap = new Dictionary<Type, MethodInfo>();
         private Dictionary<int, CommandHanderStreamContext> _streams = new Dictionary<int, CommandHanderStreamContext>();
         private Dictionary<long, RequestBase> _unansweredRequests = new Dictionary<long, RequestBase>();
+        private CommandStats _stats = new CommandStats();
 
         public delegate void CommandHandlerDelegate<T>(T command, int streamId, CommandAnswerContext answerContext);
 
+        public CommandStats Stats { get { return _stats; } }
         public event Action<int> OnClose = (s) => { };
         public TimeSpan RequestTimeout { get; set; }
 
@@ -236,11 +243,13 @@ namespace CommandNet
                 for (var i = 0; i < contexts.Length; ++i)
                 {
                     var c = contexts[i];
-                    var uId = c.Stream.WriteCommand(request);
+                    int size;
+                    var uId = c.Stream.WriteCommand(request, out size);
                     if (uId < 1)
                     {
                         return null;
                     }
+                    _stats.StatSend(size);
                     _unansweredRequests.Add(uId, requestContext);
                 }
             }
@@ -255,11 +264,13 @@ namespace CommandNet
             var requestContext = new RequestContext<ResultT>(streamId);
             lock (_unansweredRequests)
             {
-                var uId = context.Stream.WriteCommand(request);
+                int size;
+                var uId = context.Stream.WriteCommand(request, out size);
                 if (uId < 1)
                 {
                     return null;
                 }
+                _stats.StatSend(size);
                 _unansweredRequests.Add(uId, requestContext);
             }
             return requestContext;
@@ -281,7 +292,12 @@ namespace CommandNet
             for (var i = 0; i < contexts.Length; ++i)
             {
                 var s = contexts[i];
-                s.Stream.WriteCommand(command);
+                int size;
+                var r = s.Stream.WriteCommand(command, out size);
+                if (r > 0)
+                {
+                    _stats.StatSend(size);
+                }
             }
         }
 
@@ -297,7 +313,7 @@ namespace CommandNet
                 for (var i = 0; i < list.Count; ++i)
                 {
                     var h = (CommandHandlerDelegate<T>)list[i];
-                    ThreadPool.QueueUserWorkItem((o) => h(command, streamId, new CommandAnswerContext(stream, commandId)));
+                    ThreadPool.QueueUserWorkItem((o) => h(command, streamId, new CommandAnswerContext(_stats, stream, commandId)));
                 }
             }
         }
@@ -345,12 +361,14 @@ namespace CommandNet
                 {
                     int commandId;
                     int tag;
-                    var command = ctx.Stream.ReadCommand(out commandId, out tag);
+                    int size;
+                    var command = ctx.Stream.ReadCommand(out commandId, out tag, out size);
                     if (command == null)
                     {
                         Log.InfoFormat($"End of stream {ctx.StreamId}");
                         return;
                     }
+                    _stats.StatReceive(size);
                     if (tag == 0)
                     {
                         var handle = GetHandlerMethod(command.GetType());

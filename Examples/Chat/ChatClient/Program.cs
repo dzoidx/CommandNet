@@ -28,6 +28,13 @@ namespace ChatClient
                 case "send":
                     client.SendMessage(args[0], args[1]).OnResult += ProcessResponse;
                     break;
+                case "stat":
+                    var stat = client.Stat;
+                    Console.WriteLine($"CommandsSend: {stat.CommandsSend}");
+                    Console.WriteLine($"CommandsReceived: {stat.CommandsReceived}");
+                    Console.WriteLine($"BytesSend: {stat.BytesSend}");
+                    Console.WriteLine($"BytesReceived: {stat.BytesReceived}");
+                    break;
             }
         }
 
@@ -60,7 +67,6 @@ namespace ChatClient
                     ProcessCommand(parts[0], parts.Skip(1).ToArray());
                 }
             } while (command != ":exit");
-            Console.ReadKey();
         }
     }
 }

@@ -23,6 +23,7 @@ namespace ChatServer
         private TcpListener _server;
         private List<UserContext> _users = new List<UserContext>();
 
+        public CommandStats Stat { get { return _commandHandler.Stats; } }
         public ChatServer(int port, ICommandSerializer serializer)
         {
             _server = new TcpListener(IPAddress.Any, port);
