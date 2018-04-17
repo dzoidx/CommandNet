@@ -7,6 +7,6 @@ namespace ChatShared.Commands
 {
     public class ServerListRoomUsersResponse : ServerResponseBase
     {
-        public string[] UserName;
+        public string[] UsersNames;
     }
 }

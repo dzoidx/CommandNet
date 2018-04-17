@@ -31,6 +31,8 @@ namespace ChatServer
             _commandHandler.RegisterHandler<ClientLoginRequest>(LoginHandler);
             _commandHandler.RegisterHandler<ClientJoinRoomRequest>(JoinRoomHandler);
             _commandHandler.RegisterHandler<ClientSendMessageToRoom>(RoomMessageHandler);
+            _commandHandler.RegisterHandler<ClientListRoomsRequest>(ListRoomsHandler);
+            _commandHandler.RegisterHandler<ClientListRoomUsersRequest>(ListRoomUsersRequest);
             _commandHandler.OnClose += OnCloseStream;
             _server.Start();
             FetchConnection();
@@ -74,6 +76,50 @@ namespace ChatServer
             }
         }
 
+        private UserContext ValidateUser(int streamId, CommandAnswerContext answerContext, ServerResponseBase responseBase)
+        {
+            lock (_users)
+            {
+                var ctx = _users.FirstOrDefault(u => u.Stream == streamId);
+                if (ctx == null)
+                {
+                    responseBase.Status = ServerResponseStatus.Error;
+                    responseBase.Description = "User not logged in";
+                    answerContext.TryAnswer(responseBase);
+                    return null;
+                }
+                return ctx;
+            }
+        }
+
+        private void ListRoomUsersRequest(ClientListRoomUsersRequest command, int streamId, CommandAnswerContext answerContext)
+        {
+            var result = new ServerListRoomUsersResponse();
+            lock (_users)
+            {
+                var ctx = ValidateUser(streamId, answerContext, result);
+                if (answerContext.Answered)
+                    return;
+                var usersInRoom = _users.Where(_ => _.Rooms.Contains(command.RoomName)).Select(_ => _.Name).ToArray();
+                result.UsersNames = usersInRoom;
+                answerContext.TryAnswer(result);
+            }
+        }
+
+        private void ListRoomsHandler(ClientListRoomsRequest command, int streamId, CommandAnswerContext answerContext)
+        {
+            var result = new ServerListRoomsResponse();
+            lock (_users)
+            {
+                var ctx = ValidateUser(streamId, answerContext, result);
+                if (answerContext.Answered)
+                    return;
+                var allRooms = _users.SelectMany(_ => _.Rooms).Distinct().ToArray();
+                result.RoomNames = allRooms;
+                answerContext.TryAnswer(result);
+            }
+        }
+
         private void RoomMessageHandler(ClientSendMessageToRoom command, int streamId, CommandAnswerContext answerContext)
         {
             var result = new ServerResponseBase();
@@ -81,14 +127,9 @@ namespace ChatServer
             var room = command.Room;
             lock (_users)
             {
-                var ctx = _users.FirstOrDefault(u => u.Stream == streamId);
-                if (ctx == null)
-                {
-                    result.Status = ServerResponseStatus.Error;
-                    result.Description = "User not logged in";
-                    answerContext.TryAnswer(result);
+                var ctx = ValidateUser(streamId, answerContext, result);
+                if (answerContext.Answered)
                     return;
-                }
                 if (!ctx.Rooms.Contains(room))
                 {
                     result.Status = ServerResponseStatus.Error;
@@ -114,14 +155,9 @@ namespace ChatServer
             var room = command.RoomName;
             lock (_users)
             {
-                ctx = _users.FirstOrDefault(u => u.Stream == streamId);
-                if (ctx == null)
-                {
-                    result.Status = ServerResponseStatus.Error;
-                    result.Description = "User not logged in";
-                    answerContext.TryAnswer(result);
+                ctx = ValidateUser(streamId, answerContext, result);
+                if (answerContext.Answered)
                     return;
-                }
                 if (ctx.Rooms.Contains(room))
                 {
                     result.Status = ServerResponseStatus.Error;

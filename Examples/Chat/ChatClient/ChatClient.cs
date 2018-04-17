@@ -45,6 +45,16 @@ namespace ChatClient
             return _commandHandler.Request<ClientSendMessageToRoom, ServerResponseBase>(new ClientSendMessageToRoom { Room = room, Message = message }, 1);
         }
 
+        public RequestContext<ServerListRoomsResponse> ListRooms()
+        {
+            return _commandHandler.Request<ClientListRoomsRequest, ServerListRoomsResponse>(new ClientListRoomsRequest(), 1);
+        }
+
+        public RequestContext<ServerListRoomUsersResponse> ListRoomUsers(string roomName)
+        {
+            return _commandHandler.Request<ClientListRoomUsersRequest, ServerListRoomUsersResponse>(new ClientListRoomUsersRequest { RoomName = roomName }, 1);
+        }
+
         private void OnConnect(IAsyncResult ar)
         {
             var c = (TcpClient)ar.AsyncState;

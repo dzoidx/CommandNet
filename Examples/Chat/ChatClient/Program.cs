@@ -28,6 +28,12 @@ namespace ChatClient
                 case "send":
                     client.SendMessage(args[0], args[1]).OnResult += ProcessResponse;
                     break;
+                case "list_rooms":
+                    client.ListRooms().OnResult += ProcessListRooms;
+                    break;
+                case "list_room_users":
+                    client.ListRoomUsers(args[0]).OnResult += ProcessListRoomUsers;
+                    break;
                 case "stat":
                     var stat = client.Stat;
                     Console.WriteLine($"CommandsSend: {stat.CommandsSend}");
@@ -35,6 +41,31 @@ namespace ChatClient
                     Console.WriteLine($"BytesSend: {stat.BytesSend}");
                     Console.WriteLine($"BytesReceived: {stat.BytesReceived}");
                     break;
+            }
+        }
+
+        static void ProcessListRooms(ServerListRoomsResponse resp)
+        {
+            if (resp.RoomNames == null || resp.RoomNames.Length == 0)
+            {
+                ProcessResponse(resp);
+                return;
+            }
+            foreach (var room in resp.RoomNames)
+            {
+                Console.WriteLine(room);
+            }
+        }
+
+        static void ProcessListRoomUsers(ServerListRoomUsersResponse resp)
+        {
+            if (resp.UsersNames == null || resp.UsersNames.Length == 0)
+            {
+                ProcessResponse(resp);
+            }
+            foreach (var user in resp.UsersNames)
+            {
+                Console.WriteLine(user);
             }
         }
 

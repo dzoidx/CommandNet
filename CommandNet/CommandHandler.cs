@@ -32,6 +32,8 @@ namespace CommandNet
             _tag = tag;
         }
 
+        public bool Answered { get { return _answered; } }
+
         public bool TryAnswer(Command ans)
         {
             if (_answered)
