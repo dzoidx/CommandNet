@@ -1,0 +1,9 @@
+:login
+:sleep 1000
+:join_room main
+:sleep 1000
+:send main Hello!
+:send main Hello!
+:send main Hello!
+:send main Hello!
+:sleep 3000

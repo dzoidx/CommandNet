@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
@@ -7,6 +8,7 @@ using System.Threading;
 using System.Net.Sockets;
 using CommandNet.Serializer;
 using System.Reflection;
+using System.Threading.Tasks;
 using log4net;
 
 namespace CommandNet
@@ -20,7 +22,6 @@ namespace CommandNet
 
     public class CommandAnswerContext
     {
-        private bool _answered;
         private CommandStats _stats;
         private CommandStream _stream;
         private int _tag;
@@ -32,32 +33,30 @@ namespace CommandNet
             _tag = tag;
         }
 
-        public bool Answered { get { return _answered; } }
+        public bool Answered { get; private set; }
 
-        public bool TryAnswer(Command ans)
+        public async Task<bool> TryAnswer(Command ans)
         {
-            if (_answered)
+            if (Answered)
                 return false;
             try
             {
-                int size;
-                var r = _stream.WriteCommand(ans, out size, _tag);
-                if(r > 0)
-                    _stats.StatSend(size);
+                var r = await _stream.WriteCommand(ans, _tag);
+                if(r.commandId > 0)
+                    _stats.StatSend(r.size);
             }
             catch (Exception)
             {
                 return false;
             }
-            _answered = true;
+            Answered = true;
             return true;
         }
     }
 
-    public abstract class RequestBase
+    abstract class RequestBase
     {
-        protected ManualResetEvent _event = new ManualResetEvent(false);
-        public DateTime StartTime { get; private set; }
+        public DateTime StartTime { get; }
         public bool IsComplete { get; protected set; }
         public bool IsClosed { get; private set; }
         internal abstract bool HasStream(int streamId);
@@ -71,20 +70,15 @@ namespace CommandNet
         internal void Close()
         {
             IsClosed = true;
-            _event.Set();
         }
     }
 
-    public class RequestsContext<T> : RequestBase where T : Command
+    class RequestsContext<T> : RequestBase where T : Command
     {
-        private T[] _result;
-        private Dictionary<int, T> _results = new Dictionary<int, T>();
-        private List<int> _pendingStreams = new List<int>();
-
-        public T[] Result { get {
-                _event.WaitOne();
-                return _result;
-            } }
+        private readonly Dictionary<int, T> _results = new Dictionary<int, T>();
+        private readonly List<int> _pendingStreams = new List<int>();
+        private readonly TaskCompletionSource<T[]> _tcs = new TaskCompletionSource<T[]>();
+        public Task<T[]> Awaiter => _tcs.Task; 
 
         internal override bool HasStream(int streamId)
         {
@@ -104,7 +98,7 @@ namespace CommandNet
         {
             var c = result as T;
             if (c == null)
-                throw new ArgumentException(string.Format("Unexpected result type '{0}'", result.GetType().Name));
+                throw new ArgumentException($"Unexpected result type '{result.GetType().Name}'");
             SetResult(c, streamId);
         }
 
@@ -113,30 +107,23 @@ namespace CommandNet
             lock (_results)
             {
                 if (_results[streamId] != null)
-                    throw new ArgumentException(string.Format("Result for stream {0} already set", streamId));
+                    throw new ArgumentException($"Result for stream {streamId} already set");
                 _results[streamId] = result;
                 _pendingStreams.Remove(streamId);
-                _result = _results.Values.ToArray();
+                _tcs.SetResult(_results.Values.ToArray());
             }
             if (_pendingStreams.Count < 1)
             {
                 IsComplete = true;
-                _event.Set();
             }
         }
     }
 
-    public class RequestContext<T> : RequestBase where T: Command
+    class RequestContext<T> : RequestBase where T: Command
     {
-        private ManualResetEvent _event = new ManualResetEvent(false);
-        private T _result;
-        public int StreamId { get; private set; }
-        public T Result { get
-            {
-                _event.WaitOne();
-                return _result;
-            }
-        }
+        private readonly TaskCompletionSource<T> _tcs = new TaskCompletionSource<T>();
+        public int StreamId { get; }
+        public Task<T> Awaiter => _tcs.Task;
 
         public event Action<T> OnResult = (r) => { };
 
@@ -160,31 +147,32 @@ namespace CommandNet
 
         private void SetResult(T result, int streamId)
         {
-            _result = result;
-            OnResult(_result);
-            _event.Set();
+            _tcs.SetResult(result);
+            OnResult(result);
             IsComplete = true;
         }
     }
 
     public class CommandHandler : IDisposable
     {
-        private readonly static ILog Log = LogManager.GetLogger(typeof(CommandHandler));
+        private static readonly ILog Log = LogManager.GetLogger(typeof(CommandHandler));
         private int _streamCount;
-        private ICommandSerializer _serializer;
+        private readonly ICommandSerializer _serializer;
         private volatile bool _disposed;
-        private List<Thread> _threads = new List<Thread>();
-        private Dictionary<Type, List<object>> _handlers = new Dictionary<Type, List<object>>();
-        private Dictionary<Type, MethodInfo> _handlersMap = new Dictionary<Type, MethodInfo>();
-        private Dictionary<int, CommandHanderStreamContext> _streams = new Dictionary<int, CommandHanderStreamContext>();
-        private Dictionary<long, RequestBase> _unansweredRequests = new Dictionary<long, RequestBase>();
-        private CommandStats _stats = new CommandStats();
+        private readonly List<Task> _tasks = new List<Task>();
+        private readonly List<Thread> _threads = new List<Thread>();
+        private readonly Dictionary<Type, List<object>> _handlers = new Dictionary<Type, List<object>>();
+        private readonly Dictionary<Type, MethodInfo> _handlersMap = new Dictionary<Type, MethodInfo>();
+        private readonly Dictionary<int, CommandHanderStreamContext> _streams = new Dictionary<int, CommandHanderStreamContext>();
+        private readonly ConcurrentDictionary<long, RequestBase> _unansweredRequests = new ConcurrentDictionary<long, RequestBase>();
+        private readonly CommandStats _stats = new CommandStats();
 
         public delegate void CommandHandlerDelegate<T>(T command, int streamId, CommandAnswerContext answerContext);
 
         public CommandStats Stats { get { return _stats; } }
         public event Action<int> OnClose = (s) => { };
         public TimeSpan RequestTimeout { get; set; }
+        public bool IsConnected => _streams.Count > 0;
 
         public CommandHandler(ICommandSerializer serializer)
         {
@@ -192,21 +180,18 @@ namespace CommandNet
             _serializer = serializer;
         }
 
-        public int AddSource(Stream stream)
+        public int AddSource(TcpClient client)
         {
             var streamId = Interlocked.Increment(ref _streamCount);
-            var thread = new Thread(CommandStreamLoop);
-            thread.Name = "CommandStream_" + streamId + "_Loop";
-            thread.IsBackground = true;
-            var s = new CommandStream(streamId, stream, _serializer);
+            var s = new CommandStream(streamId, client, _serializer);
             var ctx = new CommandHanderStreamContext
             {
                 StreamId = streamId,
                 Stream = s,
                 InitEvent = new ManualResetEventSlim(false)
             };
-            thread.Start(ctx);
-            _threads.Add(thread);
+            var t = CommandStreamLoop(ctx);
+            _tasks.Add(t);
             ctx.InitEvent.Wait();
             return streamId;
         }
@@ -234,59 +219,51 @@ namespace CommandNet
                 list.Remove(handler);
         }
 
-        public RequestsContext<ResultT> Request<RequestT, ResultT>(RequestT request) where RequestT : Command where ResultT : Command
+        public async Task<ResultT[]> Request<RequestT, ResultT>(RequestT request) where RequestT : Command where ResultT : Command
         {
             CommandHanderStreamContext[] contexts;
             lock (_streams)
                 contexts = _streams.Values.ToArray();
             var requestContext = new RequestsContext<ResultT>(contexts.Select(_ => _.StreamId).ToArray());
-            lock (_unansweredRequests)
+            for (var i = 0; i < contexts.Length; ++i)
             {
-                for (var i = 0; i < contexts.Length; ++i)
+                var c = contexts[i];
+                var r = await c.Stream.WriteCommand(request).ConfigureAwait(false);
+                if (r.commandId < 1)
                 {
-                    var c = contexts[i];
-                    int size;
-                    var uId = c.Stream.WriteCommand(request, out size);
-                    if (uId < 1)
-                    {
-                        return null;
-                    }
-                    _stats.StatSend(size);
-                    _unansweredRequests.Add(uId, requestContext);
+                    return null;
                 }
+                _stats.StatSend(r.size);
+                _unansweredRequests.TryAdd(r.commandId, requestContext);
             }
-            return requestContext;
+            return await requestContext.Awaiter;
         }
 
-        public RequestContext<ResultT> Request<RequestT, ResultT>(RequestT request, int streamId) where RequestT : Command where ResultT : Command
+        public async Task<ResultT> Request<RequestT, ResultT>(RequestT request, int streamId) where RequestT : Command where ResultT : Command
         {
             CommandHanderStreamContext context;
             lock (_streams)
                 context = _streams.Values.First(_ => _.StreamId == streamId);
             var requestContext = new RequestContext<ResultT>(streamId);
-            lock (_unansweredRequests)
+            var r = await context.Stream.WriteCommand(request).ConfigureAwait(false);
+            if (r.commandId < 1)
             {
-                int size;
-                var uId = context.Stream.WriteCommand(request, out size);
-                if (uId < 1)
-                {
-                    return null;
-                }
-                _stats.StatSend(size);
-                _unansweredRequests.Add(uId, requestContext);
+                return null;
             }
-            return requestContext;
+            _stats.StatSend(r.size);
+            _unansweredRequests.TryAdd(r.commandId, requestContext);
+            return await requestContext.Awaiter;
         }
 
-        public void Notify(Command command)
+        public async Task Notify(Command command)
         {
             int[] streamIds;
             lock (_streams)
                 streamIds = _streams.Values.Select(_ => _.StreamId).ToArray();
-            Notify(command, streamIds);
+            await Notify(command, streamIds);
         }
 
-        public void Notify(Command command, params int[] streamIds)
+        public async Task Notify(Command command, params int[] streamIds)
         {
             CommandHanderStreamContext[] contexts;
             lock (_streams)
@@ -294,11 +271,10 @@ namespace CommandNet
             for (var i = 0; i < contexts.Length; ++i)
             {
                 var s = contexts[i];
-                int size;
-                var r = s.Stream.WriteCommand(command, out size);
-                if (r > 0)
+                var r = await s.Stream.WriteCommand(command);
+                if (r.commandId > 0)
                 {
-                    _stats.StatSend(size);
+                    _stats.StatSend(r.size);
                 }
             }
         }
@@ -351,9 +327,8 @@ namespace CommandNet
             return handleInst;
         }
 
-        private void CommandStreamLoop(object o)
+        private async Task CommandStreamLoop(CommandHanderStreamContext ctx)
         {
-            var ctx = (CommandHanderStreamContext)o;
             lock (_streams)
                 _streams.Add(ctx.StreamId, ctx);
             ctx.InitEvent.Set();
@@ -364,7 +339,8 @@ namespace CommandNet
                     int commandId;
                     int tag;
                     int size;
-                    var command = ctx.Stream.ReadCommand(out commandId, out tag, out size);
+                    Command command;
+                    (command, commandId, tag, size) = await ctx.Stream.ReadCommand().ConfigureAwait(false);
                     if (command == null)
                     {
                         Log.InfoFormat($"End of stream {ctx.StreamId}");
@@ -389,7 +365,7 @@ namespace CommandNet
                             else
                             {
                                 req.SetResult(command, ctx.StreamId);
-                                _unansweredRequests.Remove(uId);
+                                _unansweredRequests.TryRemove(uId, out var t);
                             }
                         }
                     }

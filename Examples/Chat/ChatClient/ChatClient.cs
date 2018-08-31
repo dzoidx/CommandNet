@@ -5,17 +5,18 @@ using CommandNet;
 using CommandNet.Serializer;
 using ChatShared.Commands;
 using System.Net.Sockets;
+using System.Threading.Tasks;
 
 namespace ChatClient
 {
-    public class ChatClient
+    public class ChatClient : IDisposable
     {
         private CommandHandler _commandHandler;
         private TcpClient _client;
         private string _host;
         private int _port;
 
-        public bool IsConnected { get { return _client.Connected; } }
+        public bool IsConnected { get { return _client.Connected && _commandHandler.IsConnected; } }
         public CommandStats Stat => _commandHandler.Stats;
 
         internal ChatClient(string host, int port, ICommandSerializer serializer)
@@ -27,49 +28,52 @@ namespace ChatClient
             _commandHandler.RegisterHandler<ServerRoomMessage>(OnRoomMessage);
             _commandHandler.RegisterHandler<ServerServiceMessage>(OnServiceMessage);
             _commandHandler.OnClose += OnClose;
-            ValidateConnection();
+            ValidateConnection().ContinueWith(t =>
+                {
+                    if (t.IsFaulted)
+                        Console.WriteLine("Connection failed");
+                }
+            );
         }
 
-        public RequestContext<ServerLoginResponse> Login(string userName)
+        public Task<ServerLoginResponse> Login(string userName)
         {
             return _commandHandler.Request<ClientLoginRequest, ServerLoginResponse>(new ClientLoginRequest { UserName = userName }, 1);
         }
 
-        public RequestContext<ServerResponseBase> JoinRoom(string roomName)
+        public Task<ServerResponseBase> JoinRoom(string roomName)
         {
             return _commandHandler.Request<ClientJoinRoomRequest, ServerResponseBase>(new ClientJoinRoomRequest { RoomName = roomName }, 1);
         }
 
-        public RequestContext<ServerResponseBase> SendMessage(string room, string message)
+        public Task<ServerResponseBase> SendMessage(string room, string message)
         {
             return _commandHandler.Request<ClientSendMessageToRoom, ServerResponseBase>(new ClientSendMessageToRoom { Room = room, Message = message }, 1);
         }
 
-        public RequestContext<ServerListRoomsResponse> ListRooms()
+        public Task<ServerListRoomsResponse> ListRooms()
         {
             return _commandHandler.Request<ClientListRoomsRequest, ServerListRoomsResponse>(new ClientListRoomsRequest(), 1);
         }
 
-        public RequestContext<ServerListRoomUsersResponse> ListRoomUsers(string roomName)
+        public Task<ServerListRoomUsersResponse> ListRoomUsers(string roomName)
         {
             return _commandHandler.Request<ClientListRoomUsersRequest, ServerListRoomUsersResponse>(new ClientListRoomUsersRequest { RoomName = roomName }, 1);
         }
 
-        private void OnConnect(IAsyncResult ar)
-        {
-            var c = (TcpClient)ar.AsyncState;
-            if (!ReferenceEquals(c, _client))
-                return;
-            c.EndConnect(ar);
-            var ns = new NetworkStream(c.Client);
-            _commandHandler.AddSource(c.GetStream());
-        }
-
-        private void ValidateConnection()
+        private async Task ValidateConnection()
         {
             if (_client.Connected)
                 return;
-            _client.BeginConnect(_host, _port, OnConnect, _client);
+            try
+            {
+                await _client.ConnectAsync(_host, _port);
+                _commandHandler.AddSource(_client);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
         }
 
         private void OnClose(int stream)
@@ -97,6 +101,12 @@ namespace ChatClient
                     Console.WriteLine($"{r}: Service message: {command.Message}");
                 }
             }
+        }
+
+        public void Dispose()
+        {
+            _commandHandler?.Dispose();
+            _client?.Dispose();
         }
     }
 }

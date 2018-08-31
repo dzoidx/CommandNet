@@ -4,6 +4,7 @@ using ChatShared;
 using ChatShared.Commands;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using log4net;
 using log4net.Config;
 
@@ -19,20 +20,24 @@ namespace ChatClient
             {
                 case "join_room":
                     var room = args[0];
-                    client.JoinRoom(room).OnResult += ProcessResponse;
+                    client.JoinRoom(room).ContinueWith(t => ProcessResponse(t.Result));
                     break;
                 case "login":
-                    var name = args[0];
-                    client.Login(name).OnResult += ProcessResponse;
+                    var name = args.Length > 0 ? args[0] : "user_" + Guid.NewGuid();
+                    client.Login(name).ContinueWith(t => ProcessResponse(t.Result));
                     break;
                 case "send":
-                    client.SendMessage(args[0], args[1]).OnResult += ProcessResponse;
+                    client.SendMessage(args[0], args[1]).ContinueWith(t => ProcessResponse(t.Result));
                     break;
                 case "list_rooms":
-                    client.ListRooms().OnResult += ProcessListRooms;
+                    client.ListRooms().ContinueWith(t => ProcessListRooms(t.Result));
                     break;
                 case "list_room_users":
-                    client.ListRoomUsers(args[0]).OnResult += ProcessListRoomUsers;
+                    client.ListRoomUsers(args[0]).ContinueWith(t => ProcessListRoomUsers(t.Result));
+                    break;
+                case "sleep":
+                    var timeout = int.Parse(args[0]);
+                    Thread.Sleep(timeout);
                     break;
                 case "stat":
                     var stat = client.Stat;
@@ -86,12 +91,29 @@ namespace ChatClient
                 Logger.InfoFormat("Log config: {0}", fi.FullName);
             }
 
+            var readIn = Console.IsInputRedirected;
             Console.WriteLine("Client started");
             client = new ChatClient("localhost", 8500, new JsonSerializer());
-            string command;
+            string command = null;
+            while (!client.IsConnected)
+            {
+                
+            }
             do
             {
-                command = Console.ReadLine();
+                if (readIn)
+                {
+                    command = Console.In.ReadLine();
+                    if (command == null)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    command = Console.ReadLine();
+                }
+                
                 if (command.StartsWith(":"))
                 {
                     var parts = command.Substring(1).Split(" ", StringSplitOptions.RemoveEmptyEntries);

@@ -61,7 +61,7 @@ namespace ChatServer
             try
             {
                 var client = t.Result;
-                var streamId = _commandHandler.AddSource(client.GetStream());
+                var streamId = _commandHandler.AddSource(client);
                 var remote = client.Client.RemoteEndPoint.ToString();
                 Console.WriteLine($"New client {remote}");
             }
