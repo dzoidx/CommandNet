@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Text;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace CommandNet
@@ -58,5 +59,18 @@ namespace CommandNet
             bytes.CopyTo(buff, offset + 4);
             return offset + sz + 4;
         }
+
+        public static int SimpleHash(string value)
+        {
+            uint hash = 5381;
+
+            for (var i = 0; i < value.Length; ++i)
+            {
+                hash = ((hash << 5) + hash) + value[i];
+            }
+
+            return (int) hash;
+        }
+
     }
 }
